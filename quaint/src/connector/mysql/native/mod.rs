@@ -19,6 +19,7 @@ use mysql_async::{
     self as my,
     prelude::{Query as _, Queryable as _},
 };
+use regex::Regex;
 use std::{
     future::Future,
     sync::atomic::{AtomicBool, Ordering},
@@ -74,6 +75,7 @@ pub struct Mysql {
     socket_timeout: Option<Duration>,
     is_healthy: AtomicBool,
     statement_cache: Mutex<LruCache<String, my::Statement>>,
+    use_server_prep_stmts: Option<bool>,
 }
 
 impl Mysql {
@@ -83,6 +85,7 @@ impl Mysql {
 
         Ok(Self {
             socket_timeout: url.query_params.socket_timeout,
+            use_server_prep_stmts: url.query_params.use_server_prep_stmts, //增加参数
             conn: Mutex::new(conn),
             statement_cache: Mutex::new(url.cache()),
             url,
@@ -189,30 +192,71 @@ impl_default_TransactionCapable!(Mysql);
 impl Queryable for Mysql {
     async fn query(&self, q: Query<'_>) -> crate::Result<ResultSet> {
         let (sql, params) = visitor::Mysql::build(q)?;
-        self.query_raw(&sql, &params).await
+        // println!("原始sql:{}", sql);
+        // 当use_server_prep_stmts=true表示starrocks，则进行后续处理
+        if self.use_server_prep_stmts == Some(true) {
+            //遍历参数数组并为占位符替换值
+            let params_vals = conversion::conv_params_simple(&params)?;
+            let re = Regex::new(r"\?").unwrap();
+            let matches = re.find_iter(&sql);
+            let sqls: Vec<_> = sql.split('?').collect();
+            let mut idx = 0;
+            let mut full_sql = String::new();
+            for _match_ in matches {
+                full_sql.push_str(sqls.get(idx).unwrap());
+                full_sql.push_str(params_vals.get(idx).unwrap().as_sql(false).as_str());
+                idx += 1;
+            }
+            //将剩余部分sql拼接起来
+            full_sql.push_str(sqls.get(idx).unwrap());
+            println!("替换sql:{}", full_sql);
+            self.query_raw(&full_sql, &params).await
+        } else {
+            self.query_raw(&sql, &params).await
+        }
     }
 
     async fn query_raw(&self, sql: &str, params: &[Value<'_>]) -> crate::Result<ResultSet> {
         metrics::query("mysql.query_raw", sql, params, move || async move {
-            self.prepared(sql, |stmt| async move {
+            if self.use_server_prep_stmts == Some(true) {
+                // 如果是starrocks，仅支持查询，不支持删除和更新；
                 let mut conn = self.conn.lock().await;
-                let rows: Vec<my::Row> = conn.exec(&stmt, conversion::conv_params(params)?).await?;
-                let columns = stmt.columns().iter().map(|s| s.name_str().into_owned()).collect();
-
-                let last_id = conn.last_insert_id();
+                let mut query_result = conn.query_iter(sql).await.unwrap();
+                let columns = query_result
+                    .columns()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s.name_str().into_owned())
+                    .collect();
                 let mut result_set = ResultSet::new(columns, Vec::new());
-
-                for mut row in rows {
-                    result_set.rows.push(row.take_result_row()?);
-                }
-
-                if let Some(id) = last_id {
-                    result_set.set_last_insert_id(id);
-                };
-
+                let _ = query_result
+                    .for_each(|mut row| {
+                        result_set.rows.push(row.take_result_row().unwrap());
+                    })
+                    .await;
+                // println!("查询成功:{}", result_set.rows.len());
                 Ok(result_set)
-            })
-            .await
+            } else {
+                self.prepared(sql, |stmt| async move {
+                    let mut conn = self.conn.lock().await;
+                    let rows: Vec<my::Row> = conn.exec(&stmt, conversion::conv_params(params)?).await?;
+                    let columns = stmt.columns().iter().map(|s| s.name_str().into_owned()).collect();
+
+                    let last_id = conn.last_insert_id();
+                    let mut result_set = ResultSet::new(columns, Vec::new());
+
+                    for mut row in rows {
+                        result_set.rows.push(row.take_result_row()?);
+                    }
+
+                    if let Some(id) = last_id {
+                        result_set.set_last_insert_id(id);
+                    };
+
+                    Ok(result_set)
+                })
+                .await
+            }
         })
         .await
     }
@@ -223,18 +267,43 @@ impl Queryable for Mysql {
 
     async fn execute(&self, q: Query<'_>) -> crate::Result<u64> {
         let (sql, params) = visitor::Mysql::build(q)?;
-        self.execute_raw(&sql, &params).await
+        if self.use_server_prep_stmts == Some(true) {
+            //遍历参数数组并为占位符替换值
+            let params_vals = conversion::conv_params_simple(&params)?;
+            let re = Regex::new(r"\?").unwrap();
+            let matches = re.find_iter(&sql);
+            let sqls: Vec<_> = sql.split('?').collect();
+            let mut idx = 0;
+            let mut full_sql = String::new();
+            for _match_ in matches {
+                full_sql.push_str(sqls.get(idx).unwrap());
+                full_sql.push_str(params_vals.get(idx).unwrap().as_sql(false).as_str());
+                idx += 1;
+            }
+            //将剩余部分sql拼接起来
+            full_sql.push_str(sqls.get(idx).unwrap());
+            println!("替换sql:{}", full_sql);
+            self.execute_raw(&full_sql, &params).await
+        } else {
+            self.execute_raw(&sql, &params).await
+        }
     }
 
     async fn execute_raw(&self, sql: &str, params: &[Value<'_>]) -> crate::Result<u64> {
         metrics::query("mysql.execute_raw", sql, params, move || async move {
-            self.prepared(sql, |stmt| async move {
+            if self.use_server_prep_stmts == Some(true) {
                 let mut conn = self.conn.lock().await;
-                conn.exec_drop(stmt, conversion::conv_params(params)?).await?;
-
+                conn.query_drop(sql).await?;
                 Ok(conn.affected_rows())
-            })
-            .await
+            } else {
+                self.prepared(sql, |stmt| async move {
+                    let mut conn = self.conn.lock().await;
+                    conn.exec_drop(stmt, conversion::conv_params(params)?).await?;
+
+                    Ok(conn.affected_rows())
+                })
+                .await
+            }
         })
         .await
     }

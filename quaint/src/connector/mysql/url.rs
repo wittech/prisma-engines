@@ -108,6 +108,11 @@ impl MysqlUrl {
         self.query_params.prefer_socket
     }
 
+    // 增加了参数
+    pub fn use_server_prep_stmts(&self) -> Option<bool> {
+        self.query_params.use_server_prep_stmts
+    }
+
     /// The maximum connection lifetime
     pub fn max_connection_lifetime(&self) -> Option<Duration> {
         self.query_params.max_connection_lifetime
@@ -141,6 +146,7 @@ impl MysqlUrl {
         let mut prefer_socket = None;
         let mut statement_cache_size = 100;
         let mut identity: Option<(Option<PathBuf>, Option<String>)> = None;
+        let mut use_server_prep_stmts = None;
 
         for (k, v) in url.query_pairs() {
             match k.as_ref() {
@@ -194,6 +200,12 @@ impl MysqlUrl {
                         .parse::<bool>()
                         .map_err(|_| Error::builder(ErrorKind::InvalidConnectionArguments).build())?;
                     prefer_socket = Some(as_bool)
+                }
+                "use_server_prep_stmts" => {
+                    let as_bool = v
+                        .parse::<bool>()
+                        .map_err(|_| Error::builder(ErrorKind::InvalidConnectionArguments).build())?;
+                    use_server_prep_stmts = Some(as_bool)
                 }
                 "connect_timeout" => {
                     let as_int = v
@@ -291,6 +303,7 @@ impl MysqlUrl {
             max_idle_connection_lifetime,
             prefer_socket,
             statement_cache_size,
+            use_server_prep_stmts,
         })
     }
 
@@ -312,6 +325,7 @@ pub(crate) struct MysqlUrlQueryParams {
     pub(crate) max_idle_connection_lifetime: Option<Duration>,
     pub(crate) prefer_socket: Option<bool>,
     pub(crate) statement_cache_size: usize,
+    pub(crate) use_server_prep_stmts: Option<bool>,
 
     #[cfg(feature = "mysql-native")]
     pub(crate) ssl_opts: mysql_async::SslOpts,
