@@ -8,6 +8,8 @@ mod sqlite;
 mod vitess;
 
 pub use mysql::MySqlVersion;
+pub use sqlite::SqliteVersion;
+pub use vitess::VitessVersion;
 
 pub(crate) use cockroachdb::*;
 pub(crate) use js::*;
@@ -378,12 +380,12 @@ pub(crate) fn should_run(
 
     let exclusions = exclude
         .iter()
-        .filter_map(|c| ConnectorVersion::try_from(*c).ok())
+        .map(|c| ConnectorVersion::try_from(*c).unwrap())
         .collect::<Vec<_>>();
 
     let inclusions = only
         .iter()
-        .filter_map(|c| ConnectorVersion::try_from(*c).ok())
+        .map(|c| ConnectorVersion::try_from(*c).unwrap())
         .collect::<Vec<_>>();
 
     for exclusion in exclusions.iter() {
@@ -405,7 +407,7 @@ pub(crate) fn should_run(
 
     // FIXME: This skips vitess unless explicitly opted in. Replace with `true` when fixing
     // https://github.com/prisma/client-planning/issues/332
-    CONFIG.external_test_executor().is_some() || !matches!(version, ConnectorVersion::Vitess(_))
+    CONFIG.with_driver_adapter().is_some() || !matches!(version, ConnectorVersion::Vitess(_))
 }
 
 impl TryFrom<(&str, Option<&str>)> for ConnectorVersion {

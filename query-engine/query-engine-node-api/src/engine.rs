@@ -4,11 +4,7 @@ use napi::{threadsafe_function::ThreadSafeCallContext, Env, JsFunction, JsObject
 use napi_derive::napi;
 use psl::PreviewFeature;
 use quaint::connector::ExternalConnector;
-use query_core::{
-    protocol::EngineProtocol,
-    schema::{self},
-    telemetry, TransactionOptions, TxId,
-};
+use query_core::{protocol::EngineProtocol, relation_load_strategy, schema, telemetry, TransactionOptions, TxId};
 use query_engine_common::engine::{
     map_known_error, stringify_env_values, ConnectedEngine, ConnectedEngineNative, ConstructorOptions,
     ConstructorOptionsNative, EngineBuilder, EngineBuilderNative, Inner,
@@ -126,7 +122,7 @@ impl QueryEngine {
         schema
             .diagnostics
             .to_result()
-            .map_err(|err| ApiError::conversion(err, schema.db.source()))?;
+            .map_err(|err| ApiError::conversion(err, schema.db.source_assert_single()))?;
 
         config
             .resolve_datasource_urls_query_engine(
@@ -134,11 +130,11 @@ impl QueryEngine {
                 |key| env.get(key).map(ToString::to_string),
                 ignore_env_var_errors,
             )
-            .map_err(|err| ApiError::conversion(err, schema.db.source()))?;
+            .map_err(|err| ApiError::conversion(err, schema.db.source_assert_single()))?;
 
         config
             .validate_that_one_datasource_is_provided()
-            .map_err(|errors| ApiError::conversion(errors, schema.db.source()))?;
+            .map_err(|errors| ApiError::conversion(errors, schema.db.source_assert_single()))?;
 
         let enable_metrics = config.preview_features().contains(PreviewFeature::Metrics);
         let enable_tracing = config.preview_features().contains(PreviewFeature::Tracing);
@@ -207,7 +203,10 @@ impl QueryEngine {
                                     builder.native.env.get(key).map(ToString::to_string)
                                 })
                                 .map_err(|err| {
-                                    crate::error::ApiError::Conversion(err, builder.schema.db.source().to_owned())
+                                    crate::error::ApiError::Conversion(
+                                        err,
+                                        builder.schema.db.source_assert_single().to_owned(),
+                                    )
                                 })?;
                             ConnectorKind::Rust {
                                 url,
@@ -228,9 +227,10 @@ impl QueryEngine {
                         "db.type" = connector.name(),
                     );
 
-                    connector.get_connection().instrument(conn_span).await?;
+                    let conn = connector.get_connection().instrument(conn_span).await?;
+                    let database_version = conn.version().await;
 
-                    crate::Result::<_>::Ok(executor)
+                    crate::Result::<_>::Ok((executor, database_version))
                 };
 
                 let query_schema_span = tracing::info_span!("prisma:engine:schema");
@@ -241,12 +241,17 @@ impl QueryEngine {
                     })
                     .instrument(query_schema_span);
 
-                let (query_schema, executor) = tokio::join!(query_schema_fut, executor_fut);
+                let (query_schema, executor_with_db_version) = tokio::join!(query_schema_fut, executor_fut);
+                let (executor, db_version) = executor_with_db_version?;
+
+                let query_schema = query_schema.unwrap().with_db_version_supports_join_strategy(
+                    relation_load_strategy::db_version_supports_joins_strategy(db_version)?,
+                );
 
                 Ok(ConnectedEngine {
                     schema: builder.schema.clone(),
-                    query_schema: Arc::new(query_schema.unwrap()),
-                    executor: executor?,
+                    query_schema: Arc::new(query_schema),
+                    executor,
                     engine_protocol: builder.engine_protocol,
                     native: ConnectedEngineNative {
                         config_dir: builder.native.config_dir.clone(),

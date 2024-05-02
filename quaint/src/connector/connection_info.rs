@@ -18,7 +18,7 @@ use std::convert::TryFrom;
 
 use super::ExternalConnectionInfo;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(native)]
 use super::NativeConnectionInfo;
 
 /// General information about a SQL connection.
@@ -253,6 +253,23 @@ impl ConnectionInfo {
                 NativeConnectionInfo::InMemorySqlite { .. } => "in-memory".into(),
             },
             ConnectionInfo::External(_) => "external".into(),
+        }
+    }
+
+    #[allow(unused_variables)]
+    pub fn set_version(&mut self, version: Option<String>) {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            ConnectionInfo::Native(native) => native.set_version(version),
+            ConnectionInfo::External(_) => (),
+        }
+    }
+
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            #[cfg(feature = "mysql-native")]
+            ConnectionInfo::Native(NativeConnectionInfo::Mysql(m)) => m.version(),
+            _ => None,
         }
     }
 }
