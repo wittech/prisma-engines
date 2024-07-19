@@ -5,18 +5,15 @@ use chrono::FixedOffset;
 pub use native_types::MySqlType;
 use prisma_value::{decode_bytes, PrismaValueResult};
 
-use super::completions;
 use crate::{
     datamodel_connector::{
         Connector, ConnectorCapabilities, ConnectorCapability, ConstraintScope, Flavour, JoinStrategySupport,
         NativeTypeConstructor, NativeTypeInstance, RelationMode,
     },
-    diagnostics::{DatamodelError, Diagnostics, Span},
+    diagnostics::{Diagnostics, Span},
     parser_database::{walkers, ReferentialAction, ScalarType},
-    PreviewFeature,
 };
 use enumflags2::BitFlags;
-use lsp_types::CompletionList;
 use MySqlType::*;
 
 const TINY_BLOB_TYPE_NAME: &str = "TinyBlob";
@@ -49,11 +46,6 @@ pub const CAPABILITIES: ConnectorCapabilities = enumflags2::make_bitflags!(Conne
     NamedForeignKeys |
     AdvancedJsonNullability |
     IndexColumnLengthPrefixing |
-
-    // why is this here, considering that using multiple schemas in MySQL leads to the
-    // "multiSchema migrations and introspection are not implemented on MySQL yet" error?
-    MultiSchema |
-
     FullTextIndex |
     FullTextSearch |
     FullTextSearchWithIndex |
@@ -224,15 +216,6 @@ impl Connector for MySqlDatamodelConnector {
         }
     }
 
-    fn validate_enum(&self, r#enum: walkers::EnumWalker<'_>, diagnostics: &mut Diagnostics) {
-        if let Some((_, span)) = r#enum.schema() {
-            diagnostics.push_error(DatamodelError::new_static(
-                "MySQL enums do not belong to a schema.",
-                span,
-            ));
-        }
-    }
-
     fn validate_model(&self, model: walkers::ModelWalker<'_>, relation_mode: RelationMode, errors: &mut Diagnostics) {
         for index in model.indexes() {
             validations::field_types_can_be_used_in_an_index(self, index, errors);
@@ -280,17 +263,6 @@ impl Connector for MySqlDatamodelConnector {
         Ok(())
     }
 
-    fn datasource_completions(&self, config: &crate::Configuration, completion_list: &mut CompletionList) {
-        let ds = match config.datasources.first() {
-            Some(ds) => ds,
-            None => return,
-        };
-
-        if config.preview_features().contains(PreviewFeature::MultiSchema) && !ds.schemas_defined() {
-            completions::schemas_completion(completion_list);
-        }
-    }
-
     fn flavour(&self) -> Flavour {
         Flavour::Mysql
     }
@@ -316,7 +288,10 @@ impl Connector for MySqlDatamodelConnector {
 
     // On MySQL, bytes are encoded as base64 in the database directly.
     fn parse_json_bytes(&self, str: &str, _nt: Option<NativeTypeInstance>) -> PrismaValueResult<Vec<u8>> {
-        decode_bytes(str)
+        let mut buf = vec![0; str.len()];
+
+        // MySQL base64 encodes bytes with newlines every 76 characters.
+        decode_bytes(sanitize_base64(str, &mut buf))
     }
 
     fn runtime_join_strategy_support(&self) -> JoinStrategySupport {
@@ -327,4 +302,19 @@ impl Connector for MySqlDatamodelConnector {
             false => JoinStrategySupport::No,
         }
     }
+}
+
+/// Removes newlines from a base64 string.
+fn sanitize_base64<'a>(mut s: &str, buf: &'a mut [u8]) -> &'a [u8] {
+    let mut pos = 0;
+
+    while !s.is_empty() && pos < buf.len() {
+        let nl = s.find('\n').unwrap_or(s.len());
+        let len = nl.min(buf.len() - pos);
+        buf[pos..pos + len].copy_from_slice(&s.as_bytes()[..len]);
+        pos += len;
+        s = &s[(nl + 1).min(s.len())..];
+    }
+
+    &buf[0..pos]
 }

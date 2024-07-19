@@ -31,24 +31,18 @@ mod scalar_relations {
         schema.to_owned()
     }
 
-    // TODO: fix https://github.com/prisma/team-orm/issues/684 and unexclude DAs.
-    // On napi, this currently fails with "P2023":
-    // `Inconsistent column data: Unexpected conversion failure for field Child.bInt from Number(14324324234324.0) to BigInt`.
-    #[connector_test(
-        schema(schema_common),
-        exclude(Postgres("pg.js", "neon.js"), Vitess("planetscale.js"))
-    )]
+    #[connector_test(schema(schema_common))]
     async fn common_types(runner: Runner) -> TestResult<()> {
         create_common_children(&runner).await?;
 
         insta::assert_snapshot!(
           run_query!(&runner, r#"{ findManyParent { id children { childId string int bInt float bytes bool dt } } }"#),
-          @r###"{"data":{"findManyParent":[{"id":1,"children":[{"childId":1,"string":"abc","int":1,"bInt":"1","float":1.5,"bytes":"AQID","bool":false,"dt":"1900-10-10T01:10:10.001Z"},{"childId":2,"string":"def","int":-4234234,"bInt":"14324324234324","float":-2.54367,"bytes":"FDSF","bool":true,"dt":"1999-12-12T21:12:12.121Z"}]}]}}"###
+          @r###"{"data":{"findManyParent":[{"id":1,"children":[{"childId":1,"string":"abc","int":1,"bInt":"1","float":1.5,"bytes":"VGhpcyBpcyBhIGxhcmdlIGJhc2U2NCBzdHJpbmcgdGhhdCBlbnN1cmVzIHdlIHNhbml0aXplIHRoZSBvdXRwdXQgb2YgTXlTUUwgYmFzZTY0IHN0cmluZy4=","bool":false,"dt":"1900-10-10T01:10:10.001Z"},{"childId":2,"string":"def","int":-4234234,"bInt":"14324324234324","float":-2.54367,"bytes":"FDSF","bool":true,"dt":"1999-12-12T21:12:12.121Z"}]}]}}"###
         );
 
         insta::assert_snapshot!(
           run_query!(&runner, r#"{ findUniqueParent(where: { id: 1 }) { id children { childId string int bInt float bytes bool dt } } }"#),
-          @r###"{"data":{"findUniqueParent":{"id":1,"children":[{"childId":1,"string":"abc","int":1,"bInt":"1","float":1.5,"bytes":"AQID","bool":false,"dt":"1900-10-10T01:10:10.001Z"},{"childId":2,"string":"def","int":-4234234,"bInt":"14324324234324","float":-2.54367,"bytes":"FDSF","bool":true,"dt":"1999-12-12T21:12:12.121Z"}]}}}"###
+          @r###"{"data":{"findUniqueParent":{"id":1,"children":[{"childId":1,"string":"abc","int":1,"bInt":"1","float":1.5,"bytes":"VGhpcyBpcyBhIGxhcmdlIGJhc2U2NCBzdHJpbmcgdGhhdCBlbnN1cmVzIHdlIHNhbml0aXplIHRoZSBvdXRwdXQgb2YgTXlTUUwgYmFzZTY0IHN0cmluZy4=","bool":false,"dt":"1900-10-10T01:10:10.001Z"},{"childId":2,"string":"def","int":-4234234,"bInt":"14324324234324","float":-2.54367,"bytes":"FDSF","bool":true,"dt":"1999-12-12T21:12:12.121Z"}]}}}"###
         );
 
         insta::assert_snapshot!(
@@ -333,7 +327,7 @@ mod scalar_relations {
           int: 1,
           bInt: 1,
           float: 1.5,
-          bytes: "AQID",
+          bytes: "VGhpcyBpcyBhIGxhcmdlIGJhc2U2NCBzdHJpbmcgdGhhdCBlbnN1cmVzIHdlIHNhbml0aXplIHRoZSBvdXRwdXQgb2YgTXlTUUwgYmFzZTY0IHN0cmluZy4=",
           bool: false,
           dt: "1900-10-10T01:10:10.001Z",
       }"#,

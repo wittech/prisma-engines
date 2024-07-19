@@ -1,5 +1,5 @@
 use crate::{CompositeFieldRef, RelationFieldRef, ScalarFieldRef};
-use std::string::ToString;
+use std::fmt::Display;
 
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
 pub enum SortOrder {
@@ -99,11 +99,17 @@ impl OrderBy {
         })
     }
 
-    pub fn relevance(fields: Vec<ScalarFieldRef>, search: String, sort_order: SortOrder) -> Self {
+    pub fn relevance(
+        fields: Vec<ScalarFieldRef>,
+        search: String,
+        sort_order: SortOrder,
+        path: Vec<OrderByHop>,
+    ) -> Self {
         Self::Relevance(OrderByRelevance {
             fields,
             sort_order,
             search,
+            path,
         })
     }
 }
@@ -201,13 +207,14 @@ pub struct OrderByRelevance {
     pub fields: Vec<ScalarFieldRef>,
     pub sort_order: SortOrder,
     pub search: String,
+    pub path: Vec<OrderByHop>,
 }
 
-impl ToString for SortOrder {
-    fn to_string(&self) -> String {
+impl Display for SortOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SortOrder::Ascending => String::from("ASC"),
-            SortOrder::Descending => String::from("DESC"),
+            SortOrder::Ascending => f.write_str("ASC"),
+            SortOrder::Descending => f.write_str("DESC"),
         }
     }
 }

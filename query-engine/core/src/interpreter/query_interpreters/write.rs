@@ -6,7 +6,7 @@ use crate::{
     QueryResult, RecordSelection,
 };
 use connector::{ConnectionLike, DatasourceFieldName, NativeUpsert, WriteArgs};
-use query_structure::{ManyRecords, Model};
+use query_structure::{ManyRecords, Model, RawJson};
 
 pub(crate) async fn execute(
     tx: &mut dyn ConnectionLike,
@@ -31,14 +31,16 @@ pub(crate) async fn execute(
 async fn query_raw(tx: &mut dyn ConnectionLike, q: RawQuery) -> InterpretationResult<QueryResult> {
     let res = tx.query_raw(q.model.as_ref(), q.inputs, q.query_type).await?;
 
-    Ok(QueryResult::Json(res))
+    Ok(QueryResult::RawJson(res))
 }
 
 async fn execute_raw(tx: &mut dyn ConnectionLike, q: RawQuery) -> InterpretationResult<QueryResult> {
     let res = tx.execute_raw(q.inputs).await?;
     let num = serde_json::Value::Number(serde_json::Number::from(res));
 
-    Ok(QueryResult::Json(num))
+    Ok(QueryResult::RawJson(
+        RawJson::try_new(num).map_err(|err| InterpreterError::Generic(err.to_string()))?,
+    ))
 }
 
 async fn create_one(
@@ -72,11 +74,13 @@ async fn create_many(
             .create_records_returning(&q.model, q.args, q.skip_duplicates, selected_fields.fields, trace_id)
             .await?;
 
+        let nested: Vec<QueryResult> = super::read::process_nested(tx, selected_fields.nested, Some(&records)).await?;
+
         let selection = RecordSelection {
             name: q.name,
             fields: selected_fields.order,
             records,
-            nested: vec![],
+            nested,
             model: q.model,
             virtual_fields: vec![],
         };
@@ -84,6 +88,7 @@ async fn create_many(
         Ok(QueryResult::RecordSelection(Some(Box::new(selection))))
     } else {
         let affected_records = tx.create_records(&q.model, q.args, q.skip_duplicates, trace_id).await?;
+
         Ok(QueryResult::Count(affected_records))
     }
 }
@@ -108,6 +113,7 @@ async fn create_many_split_by_shape(
 
     if let Some(selected_fields) = q.selected_fields {
         let mut result: Option<ManyRecords> = None;
+
         for args in args_by_shape.into_values() {
             let current_batch = tx
                 .create_records_returning(
@@ -137,11 +143,14 @@ async fn create_many_split_by_shape(
                 .await?
         };
 
+        let nested: Vec<QueryResult> =
+            super::read::process_nested(tx, selected_fields.nested.clone(), Some(&records)).await?;
+
         let selection = RecordSelection {
             name: q.name,
             fields: selected_fields.order,
             records,
-            nested: vec![],
+            nested,
             model: q.model,
             virtual_fields: vec![],
         };
@@ -149,12 +158,14 @@ async fn create_many_split_by_shape(
         Ok(QueryResult::RecordSelection(Some(Box::new(selection))))
     } else {
         let mut result = 0;
+
         for args in args_by_shape.into_values() {
             let affected_records = tx
                 .create_records(&q.model, args, q.skip_duplicates, trace_id.clone())
                 .await?;
             result += affected_records;
         }
+
         Ok(QueryResult::Count(result))
     }
 }

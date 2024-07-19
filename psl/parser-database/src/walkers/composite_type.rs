@@ -1,7 +1,11 @@
-use super::Walker;
-use crate::{ast, FileId, ScalarFieldType, ScalarType};
+use crate::{
+    ast::{self, NewlineType, WithDocumentation, WithName, WithSpan},
+    walkers::{newline, Walker},
+    FileId, ScalarFieldType, ScalarType,
+};
 use diagnostics::Span;
-use schema_ast::ast::{WithDocumentation, WithName};
+
+use super::EnumWalker;
 
 /// A composite type, introduced with the `type` keyword in the schema.
 ///
@@ -28,6 +32,16 @@ impl<'db> CompositeTypeWalker<'db> {
         self.id
     }
 
+    /// The ID of the file containing the composite type.
+    pub fn file_id(self) -> FileId {
+        self.id.0
+    }
+
+    /// Is the composite type defined in a specific file?
+    pub fn is_defined_in_file(self, file_id: FileId) -> bool {
+        self.ast_composite_type().span.file_id == file_id
+    }
+
     /// The composite type node in the AST.
     pub fn ast_composite_type(self) -> &'db ast::CompositeType {
         &self.db.asts[self.id]
@@ -38,11 +52,29 @@ impl<'db> CompositeTypeWalker<'db> {
         self.ast_composite_type().name()
     }
 
+    /// Returns a specific field from the model.
+    pub fn field(&self, field_id: ast::FieldId) -> CompositeTypeFieldWalker<'db> {
+        self.walk((self.id, field_id))
+    }
+
     /// Iterator over all the fields of the composite type.
     pub fn fields(self) -> impl ExactSizeIterator<Item = CompositeTypeFieldWalker<'db>> + Clone {
         self.ast_composite_type()
             .iter_fields()
             .map(move |(id, _)| self.walk((self.id, id)))
+    }
+
+    /// What kind of newlines the composite type uses.
+    pub fn newline(self) -> NewlineType {
+        let field = match self.fields().last() {
+            Some(field) => field,
+            None => return NewlineType::default(),
+        };
+
+        let src = self.db.source(self.id.0);
+        let span = field.ast_field().span();
+
+        newline(src, span)
     }
 }
 
@@ -84,6 +116,16 @@ impl<'db> CompositeTypeFieldWalker<'db> {
     /// Is the field required, optional or a list?
     pub fn arity(self) -> ast::FieldArity {
         self.ast_field().arity
+    }
+
+    /// Is this field's type an enum? If yes, walk the enum.
+    pub fn field_type_as_enum(self) -> Option<EnumWalker<'db>> {
+        self.r#type().as_enum().map(|id| self.db.walk(id))
+    }
+
+    /// Is this field's type a composite type? If yes, walk the composite type.
+    pub fn field_type_as_composite_type(self) -> Option<CompositeTypeWalker<'db>> {
+        self.r#type().as_composite_type().map(|id| self.db.walk(id))
     }
 
     /// The type of the field, e.g. `String` in `streetName String?`.

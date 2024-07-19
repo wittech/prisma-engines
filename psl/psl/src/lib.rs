@@ -2,6 +2,7 @@
 #![deny(rust_2018_idioms, unsafe_code, missing_docs)]
 
 pub use psl_core::builtin_connectors;
+use psl_core::parser_database::Files;
 pub use psl_core::{
     builtin_connectors::{can_have_capability, can_support_relation_load_strategy, has_capability},
     datamodel_connector,
@@ -40,6 +41,22 @@ pub fn parse_configuration(schema: &str) -> Result<Configuration, Diagnostics> {
     psl_core::parse_configuration(schema, builtin_connectors::BUILTIN_CONNECTORS)
 }
 
+/// Parses and validates Prisma schemas, but skip analyzing everything except datasource and generator
+/// blocks.
+pub fn parse_configuration_multi_file(
+    files: &[(String, SourceFile)],
+) -> Result<(Files, Configuration), (Files, Diagnostics)> {
+    psl_core::parse_configuration_multi_file(files, builtin_connectors::BUILTIN_CONNECTORS)
+}
+
+/// Parses and validates Prisma schemas, but skip analyzing everything except datasource and generator
+/// blocks. It never fails, but when the returned `Diagnostics` contains errors, it implies that the
+/// `Configuration` content is partial.
+/// Consumers may then decide  whether to convert `Diagnostics` into an error.
+pub fn error_tolerant_parse_configuration(files: &[(String, SourceFile)]) -> (Files, Configuration, Diagnostics) {
+    psl_core::error_tolerant_parse_configuration(files, builtin_connectors::BUILTIN_CONNECTORS)
+}
+
 /// Parse and analyze a Prisma schema.
 pub fn parse_schema(file: impl Into<SourceFile>) -> Result<ValidatedSchema, String> {
     let mut schema = validate(file.into());
@@ -47,6 +64,18 @@ pub fn parse_schema(file: impl Into<SourceFile>) -> Result<ValidatedSchema, Stri
         .diagnostics
         .to_result()
         .map_err(|err| err.to_pretty_string("schema.prisma", schema.db.source_assert_single()))?;
+    Ok(schema)
+}
+
+/// Parse and analyze a Prisma schema.
+pub fn parse_schema_multi(files: &[(String, SourceFile)]) -> Result<ValidatedSchema, String> {
+    let mut schema = validate_multi_file(files);
+
+    schema
+        .diagnostics
+        .to_result()
+        .map_err(|err| schema.db.render_diagnostics(&err))?;
+
     Ok(schema)
 }
 
@@ -62,6 +91,6 @@ pub fn parse_without_validation(file: SourceFile, connector_registry: ConnectorR
 }
 /// The most general API for dealing with Prisma schemas. It accumulates what analysis and
 /// validation information it can, and returns it along with any error and warning diagnostics.
-pub fn validate_multi_file(files: Vec<(String, SourceFile)>) -> ValidatedSchema {
+pub fn validate_multi_file(files: &[(String, SourceFile)]) -> ValidatedSchema {
     psl_core::validate_multi_file(files, builtin_connectors::BUILTIN_CONNECTORS)
 }
