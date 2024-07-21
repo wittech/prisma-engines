@@ -18,3 +18,4 @@ quaint = { workspace = true, optional = true }
 [features]
 default = ["sql"]
 sql = ["quaint", "tokio"]
+
