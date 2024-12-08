@@ -197,7 +197,7 @@ impl Queryable for Mysql {
     async fn query(&self, q: Query<'_>) -> crate::Result<ResultSet> {
         let (sql, params) = visitor::Mysql::build(q)?;
         // println!("原始sql:{}", sql);
-        // 当use_server_prep_stmts=true表示starrocks，则进行后续处理
+        // TODO 当use_server_prep_stmts=true表示starrocks，则进行后续处理
         if self.use_server_prep_stmts == Some(true) {
             //遍历参数数组并为占位符替换值
             let params_vals = conversion::conv_params_simple(&params)?;
@@ -213,7 +213,7 @@ impl Queryable for Mysql {
             }
             //将剩余部分sql拼接起来
             full_sql.push_str(sqls.get(idx).unwrap());
-            println!("替换sql:{}", full_sql);
+            // println!("替换sql:{}", full_sql);
             self.query_raw(&full_sql, &params).await
         } else {
             self.query_raw(&sql, &params).await
@@ -221,20 +221,20 @@ impl Queryable for Mysql {
     }
 
     async fn query_raw(&self, sql: &str, params: &[Value<'_>]) -> crate::Result<ResultSet> {
-        metrics::query("mysql.query_raw", sql, params, move || async move {
+        metrics::query("mysql.query_raw", DB_SYSTEM_NAME, sql, params, move || async move {
+            //TODO 增加了starrocks的处理逻辑；
             if self.use_server_prep_stmts == Some(true) {
                 // 如果是starrocks，仅支持查询，不支持删除和更新；
                 let mut conn = self.conn.lock().await;
-                let mut query_result = conn.query_iter(sql).await.unwrap();
-                let columns = query_result
-                    .columns()
-                    .unwrap()
-                    .iter()
-                    .map(|s| s.name_str().into_owned())
-                    .collect();
-                let mut result_set = ResultSet::new(columns, Vec::new());
+                let mut query_result = conn.query_iter(sql).await?;
+                let columns_options = query_result.columns().unwrap();
+                let columns: Vec<String> = columns_options.iter().map(|s| s.name_str().into_owned()).collect();
+                let col_types: Vec<ColumnType> = columns_options.iter().map(|c| ColumnType::from(c)).collect::<Vec<_>>();
+
+                let mut result_set: ResultSet = ResultSet::new(columns, col_types, Vec::new());
                 let _ = query_result
                     .for_each(|mut row| {
+                        // 值在take_result_row方法中进行转换；
                         result_set.rows.push(row.take_result_row().unwrap());
                     })
                     .await;
@@ -283,33 +283,9 @@ impl Queryable for Mysql {
                     };
     
                     Ok(result_set)
-                } else {
-                    self.prepared(sql, |stmt| async move {
-                        let mut conn = self.conn.lock().await;
-                        let rows: Vec<my::Row> = conn.exec(&stmt, conversion::conv_params(params)?).await?;
-                        let columns = stmt.columns().iter().map(|s| s.name_str().into_owned()).collect();
-    
-                        let last_id = conn.last_insert_id();
-                        let mut result_set = ResultSet::new(columns, Vec::new());
-    
-                        for mut row in rows {
-                            result_set.rows.push(row.take_result_row()?);
-                        }
-    
-                        if let Some(id) = last_id {
-                            result_set.set_last_insert_id(id);
-                        };
-    
-                        Ok(result_set)
-                        })
-                        .await
-                    }
-                })
-                .await
-                //
+                }).await
             }
-        })
-        .await
+        }).await
     }
 
     async fn query_raw_typed(&self, sql: &str, params: &[Value<'_>]) -> crate::Result<ResultSet> {
@@ -367,7 +343,7 @@ impl Queryable for Mysql {
     }
 
     async fn execute_raw(&self, sql: &str, params: &[Value<'_>]) -> crate::Result<u64> {
-        metrics::query("mysql.execute_raw", sql, params, move || async move {
+        metrics::query("mysql.execute_raw", DB_SYSTEM_NAME, sql, params, move || async move {
             if self.use_server_prep_stmts == Some(true) {
                 let mut conn = self.conn.lock().await;
                 conn.query_drop(sql).await?;

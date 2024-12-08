@@ -445,7 +445,7 @@ impl TakeRow for my::Row {
                     let dt = NaiveDateTime::new(date, time);
                     Value::datetime(DateTime::<Utc>::from_utc(dt, Utc))
                 }
-                //增加二进制blob转日期类型
+                //TODO 增加二进制blob转日期类型，适配海量数据库
                 my::Value::Bytes(b) if column.is_date() => {
                     let dt = parse_mysql_datetime_string(&b).unwrap();
                     // println!("解析时间：{}-{}-{} {}:{}:{}", dt.0, month, day, hour, minute, second);
@@ -454,7 +454,7 @@ impl TakeRow for my::Row {
                     let dt = NaiveDateTime::new(date, time);
                     Value::datetime(DateTime::<Utc>::from_utc(dt, Utc))
                 }
-                //增加二进制blob转日期类型
+                //TODO 增加二进制blob转日期类型，适配海量数据库
                 my::Value::Bytes(b) if column.is_time() => {
                     let dt = parse_mysql_time_string(&b).unwrap();
                     if dt.0 {
@@ -467,6 +467,39 @@ impl TakeRow for my::Row {
                     // }
                     let time = NaiveTime::from_hms_micro_opt(dt.1, dt.2, dt.3, dt.4).unwrap();
                     Value::time(time)
+                }
+
+                // TODO 适配starrocks数据库的select count(*)，返回的值是字节数组；
+                my::Value::Bytes(b) if column.is_int64() => {
+                    let s = String::from_utf8(b).map_err(|_| {
+                        let msg = "Could not convert INT64 from bytes to String.";
+                        let kind = ErrorKind::conversion(msg);
+
+                        Error::builder(kind).build()
+                    })?;
+                    let parsed_value: i64 = s.parse().map_err(|_| {
+                        let msg = "Could not parse string to INT64.";
+                        let kind = ErrorKind::conversion(msg);
+
+                        Error::builder(kind).build()
+                    })?;
+                    Value::int64(parsed_value)
+                }
+
+                my::Value::Bytes(b) if column.is_int32() => {
+                    let s = String::from_utf8(b).map_err(|_| {
+                        let msg = "Could not convert INT32 from bytes to String.";
+                        let kind = ErrorKind::conversion(msg);
+
+                        Error::builder(kind).build()
+                    })?;
+                    let parsed_value: i32 = s.parse().map_err(|_| {
+                        let msg = "Could not parse string to INT32.";
+                        let kind = ErrorKind::conversion(msg);
+
+                        Error::builder(kind).build()
+                    })?;
+                    Value::int32(parsed_value)
                 }
 
                 // NEWDECIMAL returned as bytes. See https://mariadb.com/kb/en/resultset-row/#decimal-binary-encoding

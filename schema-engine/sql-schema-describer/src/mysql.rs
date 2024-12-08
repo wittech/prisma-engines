@@ -881,6 +881,10 @@ async fn push_foreign_keys(
             "set default" => ForeignKeyAction::SetDefault,
             "restrict" => ForeignKeyAction::Restrict,
             "no action" => ForeignKeyAction::NoAction,
+            // compatible with oceanbase
+            "set_null" => ForeignKeyAction::SetNull,
+            "set_default" => ForeignKeyAction::SetDefault,
+            "no_action" => ForeignKeyAction::NoAction,
             s => panic!("Unrecognized on delete action '{s}'"),
         };
         let on_update_action = match row.get_expect_string("update_rule").to_lowercase().as_str() {
@@ -889,6 +893,10 @@ async fn push_foreign_keys(
             "set default" => ForeignKeyAction::SetDefault,
             "restrict" => ForeignKeyAction::Restrict,
             "no action" => ForeignKeyAction::NoAction,
+            // compatible with oceanbase
+            "set_null" => ForeignKeyAction::SetNull,
+            "set_default" => ForeignKeyAction::SetDefault,
+            "no_action" => ForeignKeyAction::NoAction,
             s => panic!("Unrecognized on update action '{s}'"),
         };
 
