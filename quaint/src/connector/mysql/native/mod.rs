@@ -339,7 +339,7 @@ impl Queryable for Mysql {
             }
             //将剩余部分sql拼接起来
             full_sql.push_str(sqls.get(idx).unwrap());
-            println!("替换sql:{}", full_sql);
+            // println!("替换sql:{}", full_sql);
             self.execute_raw(&full_sql, &params).await
         } else {
             self.execute_raw(&sql, &params).await
