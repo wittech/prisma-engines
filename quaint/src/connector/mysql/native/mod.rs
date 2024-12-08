@@ -221,41 +221,23 @@ impl Queryable for Mysql {
     }
 
     async fn query_raw(&self, sql: &str, params: &[Value<'_>]) -> crate::Result<ResultSet> {
-        metrics::query("mysql.query_raw", DB_SYSTEM_NAME, sql, params, move || async move {
-            //TODO 增加了starrocks的处理逻辑；
-            if self.use_server_prep_stmts == Some(true) {
-                // 如果是starrocks，仅支持查询，不支持删除和更新；
-                let mut conn = self.conn.lock().await;
-                let mut query_result = conn.query_iter(sql).await?;
-                let (columns, col_types): (Vec<String>, Vec<ColumnType>) = query_result.columns().unwrap().iter().map(|c| {
-                    (c.name_str().into_owned(), ColumnType::from(c))
-                }).unzip();
-
-                let mut result_set: ResultSet = ResultSet::new(columns, col_types, Vec::new());
-                let _ = query_result
-                    .for_each(|mut row| {
-                        // 值在take_result_row方法中进行转换；
-                        result_set.rows.push(row.take_result_row().unwrap());
-                    })
-                    .await;
-                // println!("查询成功:{}", result_set.rows.len());
-                Ok(result_set)
-            } else {
+        if self.use_server_prep_stmts == Some(false) {
+            metrics::query("mysql.query_raw", DB_SYSTEM_NAME, sql, params, move || async move {
                 self.prepared(sql, |stmt| async move {
                     let mut conn = self.conn.lock().await;
                     let rows: Vec<my::Row> = conn.exec(&stmt, conversion::conv_params(params)?).await?;
-    
+
                     let last_id = conn.last_insert_id();
-    
+
                     let mut result_rows = Vec::with_capacity(rows.len());
                     let mut columns: Vec<String> = Vec::new();
                     let mut column_types: Vec<ColumnType> = Vec::new();
-    
+
                     let mut columns_set = false;
-    
+
                     for mut row in rows {
                         let row = row.take_result_row()?;
-    
+
                         if !columns_set {
                             for (idx, _) in row.iter().enumerate() {
                                 let maybe_column = stmt.columns().get(idx);
@@ -265,27 +247,49 @@ impl Queryable for Mysql {
                                     .map(|col| col.name_str().into_owned())
                                     .unwrap_or_else(|| format!("f{idx}"));
                                 let column_type = maybe_column.map(ColumnType::from).unwrap_or(ColumnType::Unknown);
-    
+
                                 columns.push(column);
                                 column_types.push(column_type);
                             }
-    
+
                             columns_set = true;
                         }
-    
+
                         result_rows.push(row);
                     }
-    
+
                     let mut result_set = ResultSet::new(columns, column_types, result_rows);
-    
+
                     if let Some(id) = last_id {
                         result_set.set_last_insert_id(id);
                     };
-    
+
                     Ok(result_set)
-                }).await
-            }
-        }).await
+                })
+                .await
+            })
+            .await
+        } else {
+            // 如果是starrocks，仅支持查询，不支持删除和更新；
+            let mut conn = self.conn.lock().await;
+            let mut query_result = conn.query_iter(sql).await?;
+            let (columns, col_types): (Vec<String>, Vec<ColumnType>) = query_result
+                .columns()
+                .unwrap()
+                .iter()
+                .map(|c| (c.name_str().into_owned(), ColumnType::from(c)))
+                .unzip();
+
+            let mut result_set: ResultSet = ResultSet::new(columns, col_types, Vec::new());
+            let _ = query_result
+                .for_each(|mut row| {
+                    // 值在take_result_row方法中进行转换；
+                    result_set.rows.push(row.take_result_row().unwrap());
+                })
+                .await;
+            // println!("查询成功:{}", result_set.rows.len());
+            Ok(result_set)
+        }
     }
 
     async fn query_raw_typed(&self, sql: &str, params: &[Value<'_>]) -> crate::Result<ResultSet> {
