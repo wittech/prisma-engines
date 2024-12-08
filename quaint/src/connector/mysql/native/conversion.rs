@@ -3,7 +3,7 @@ use crate::{
     connector::{queryable::TakeRow, TypeIdentifier},
     error::{Error, ErrorKind},
 };
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc, TimeZone};
 use lexical::parse;
 use mysql_async::{
     self as my,
@@ -443,7 +443,7 @@ impl TakeRow for my::Row {
                     let date = NaiveDate::from_ymd_opt(dt.0 as i32, dt.1, dt.2).unwrap();
                     let time = NaiveTime::from_hms_opt(dt.3, dt.4, dt.5).unwrap();
                     let dt = NaiveDateTime::new(date, time);
-                    Value::datetime(DateTime::<Utc>::from_utc(dt, Utc))
+                    Value::datetime(Utc.from_utc_datetime(&dt))
                 }
                 //TODO 增加二进制blob转日期类型，适配海量数据库
                 my::Value::Bytes(b) if column.is_date() => {
@@ -452,7 +452,7 @@ impl TakeRow for my::Row {
                     let date = NaiveDate::from_ymd_opt(dt.0 as i32, dt.1, dt.2).unwrap();
                     let time = NaiveTime::from_hms_opt(dt.3, dt.4, dt.5).unwrap();
                     let dt = NaiveDateTime::new(date, time);
-                    Value::datetime(DateTime::<Utc>::from_utc(dt, Utc))
+                    Value::datetime(Utc.from_utc_datetime(&dt))
                 }
                 //TODO 增加二进制blob转日期类型，适配海量数据库
                 my::Value::Bytes(b) if column.is_time() => {
@@ -566,7 +566,7 @@ impl TakeRow for my::Row {
                     let date = NaiveDate::from_ymd_opt(year.into(), month.into(), day.into()).unwrap();
                     let dt = NaiveDateTime::new(date, time);
 
-                    Value::datetime(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+                    Value::datetime(Utc.from_utc_datetime(&dt))
                 }
                 my::Value::Time(is_neg, days, hours, minutes, seconds, micros) => {
                     if is_neg {
