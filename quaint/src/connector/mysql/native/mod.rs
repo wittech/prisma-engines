@@ -227,9 +227,9 @@ impl Queryable for Mysql {
                 // 如果是starrocks，仅支持查询，不支持删除和更新；
                 let mut conn = self.conn.lock().await;
                 let mut query_result = conn.query_iter(sql).await?;
-                let columns_options = query_result.columns().unwrap();
-                let columns: Vec<String> = columns_options.iter().map(|s| s.name_str().into_owned()).collect();
-                let col_types: Vec<ColumnType> = columns_options.iter().map(|c| ColumnType::from(c)).collect::<Vec<_>>();
+                let (columns, col_types): (Vec<String>, Vec<ColumnType>) = query_result.columns().unwrap().iter().map(|c| {
+                    (c.name_str().into_owned(), ColumnType::from(c))
+                }).unzip();
 
                 let mut result_set: ResultSet = ResultSet::new(columns, col_types, Vec::new());
                 let _ = query_result
